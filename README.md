@@ -130,7 +130,7 @@ Evaluación mediante **Stratified K-Fold CV (K=5)** sobre el dataset combinado d
 
 --- 
 
-## Estructura del repositorio
+## Arquitectura produccion
 
 ```
 [React App — GitHub Pages]
