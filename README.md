@@ -127,6 +127,39 @@ Evaluación mediante **Stratified K-Fold CV (K=5)** sobre el dataset combinado d
 
 ```
 
+
+--- 
+
+## Estructura del repositorio
+
+```
+[React App — GitHub Pages]
+         │
+         ├── POST /predict  ──────────────────────────────►  [FastAPI backend — local o Railway]
+         │   {features: {...}}                                        │
+         │                                                    ├── llama a Databricks endpoint
+         │                                                    │   → obtiene probabilidad
+         │                                                    ├── calcula SHAP
+         │                                                    └── extrae regla DT
+         │
+         ◄── responde con:
+             {
+               prediccion: "Ataque",
+               probabilidad: 0.87,
+               shap_values: [...],
+               shap_base: -5.2,
+               regla: ["avg_conn < 180M", "lit401_low = 1"],
+               features_en_regla: [...]
+             }
+         │
+         ▼
+[React renderiza]
+    ├── tarjeta resultado (Normal/Ataque + prob)
+    ├── gráfica SHAP con barras horizontales (D3 o Recharts)
+    └── regla de decisión formateada
+
+```
+
 > Los notebooks están en formato Databricks. Para importarlos: **Databricks Workspace → Import → seleccionar archivo**
 
 ---
