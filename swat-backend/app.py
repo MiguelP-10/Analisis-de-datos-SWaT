@@ -156,3 +156,132 @@ def predict_caso(caso_id: str):
 @app.get("/feature_stats")
 def get_feature_stats():
     return feature_stats
+
+
+from fastapi import WebSocket, WebSocketDisconnect
+import asyncio
+
+# Cargar secuencias al arrancar
+with open("secuencias_escucha.json", encoding="utf-8") as f:
+    datos_escucha = json.load(f)
+
+SECUENCIAS = datos_escucha["secuencias"]
+
+# ── Lista de secuencias disponibles
+@app.get("/secuencias")
+def get_secuencias():
+    return [
+        {
+            "id":          seq_id,
+            "nombre":      seq["nombre"],
+            "descripcion": seq["descripcion"],
+            "n_total":     seq["n_total"],
+            "n_normal":    seq["n_normal"],
+            "n_ataque":    seq["n_ataque"],
+        }
+        for seq_id, seq in SECUENCIAS.items()
+    ]
+
+# ── WebSocket — modo escucha
+@app.websocket("/ws/escucha/{seq_id}")
+async def websocket_escucha(websocket: WebSocket, seq_id: str):
+    await websocket.accept()
+
+    if seq_id not in SECUENCIAS:
+        await websocket.send_json({"error": f"Secuencia '{seq_id}' no encontrada"})
+        await websocket.close()
+        return
+
+    secuencia  = SECUENCIAS[seq_id]
+    registros  = secuencia["registros"]
+    ataque_detectado = False
+
+    await websocket.send_json({
+        "tipo":    "inicio",
+        "seq_id":  seq_id,
+        "nombre":  secuencia["nombre"],
+        "n_total": secuencia["n_total"]
+    })
+
+    for i, registro in enumerate(registros):
+        # Comprobar si el cliente sigue conectado
+        try:
+            # Vector de features
+            features  = registro["features"]
+            rec_array = np.array([
+                features.get(f, 0.0) for f in FEATURE_COLS
+            ]).reshape(1, -1)
+
+            # Predicción
+            prob_ataque = float(gb.predict_proba(rec_array)[0][1])
+            prediccion  = "Ataque" if prob_ataque >= UMBRAL else "Normal"
+
+            # SHAP solo cuando detecta ataque — es más lento
+            shap_vals = None
+            shap_base = None
+            regla = None
+
+            if prediccion == "Ataque" and not ataque_detectado:
+                ataque_detectado = True
+
+                sv = explainer_shap.shap_values(rec_array)[0]
+                shap_base = float(explainer_shap.expected_value)
+
+                shap_vals = sorted([
+                    {
+                        "feature": feat,
+                        "valor": round(float(rec_array[0][j]), 4),
+                        "shap_value": round(float(sv[j]), 4)
+                    }
+                    for j, feat in enumerate(FEATURE_COLS)
+                ], key=lambda x: abs(x["shap_value"]), reverse=True)[:10]
+
+                # Regla DT
+                feature_idx = dt_aux.tree_.feature
+                threshold   = dt_aux.tree_.threshold
+                node        = 0
+                regla       = []
+                while dt_aux.tree_.children_left[node] != -1:
+                    feat_i      = feature_idx[node]
+                    thres       = threshold[node]
+                    val         = rec_array[0][feat_i]
+                    nombre_feat = FEATURE_COLS[feat_i]
+                    shap_f      = float(sv[feat_i])
+                    if val <= thres:
+                        condicion = f"{nombre_feat} ≤ {thres:.3f}"
+                        node = dt_aux.tree_.children_left[node]
+                    else:
+                        condicion = f"{nombre_feat} > {thres:.3f}"
+                        node = dt_aux.tree_.children_right[node]
+                    regla.append({
+                        "condicion":  condicion,
+                        "feature":    nombre_feat,
+                        "valor":      round(float(val), 4),
+                        "shap_value": round(shap_f, 4)
+                    })
+
+            await websocket.send_json({
+                "tipo": "registro",
+                "idx": i,
+                "timestamp": registro["timestamp"],
+                "label_real": registro["label_real"],
+                "prediccion": prediccion,
+                "probabilidad": round(prob_ataque, 4),
+                "shap_base": shap_base,
+                "shap_values": shap_vals,
+                "regla": regla,
+            })
+
+            # Si detectó ataque enviar evento de alerta y parar
+            if ataque_detectado:
+                await websocket.send_json({"tipo": "alerta", "idx": i})
+                break
+
+            # Delay de 1 segundo entre registros
+            await asyncio.sleep(1)
+
+        except WebSocketDisconnect:
+            break
+
+    await websocket.send_json({"tipo": "fin"})
+    await websocket.close()

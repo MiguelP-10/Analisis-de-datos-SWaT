@@ -3,18 +3,123 @@ import axios from 'axios';
 import './App.css';
 import ShapChart from './components/ShapChart';
 import ReglaDecision from './components/ReglaDecision';
+import ModoEscucha from './components/ModoEscucha';
+
 
 const API = 'http://127.0.0.1:8000';
 
 export default function App() {
-  const [casos, setCasos]           = useState([]);
-  const [casosCargados, setCargados] = useState(false);
-  const [seleccionado, setSeleccionado] = useState(null);
-  const [resultado, setResultado]   = useState(null);
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState(null);
+  const [modo, setModo] = useState(null); // null | 'casos' | 'escucha'
 
-  // Cargar lista de casos al montar
+  if (!modo) return <Dashboard onSelect={setModo} />;
+  if (modo === 'casos') return <ModoCasos onBack={() => setModo(null)} />;
+  if (modo === 'escucha') return <ModoEscucha onBack={() => setModo(null)} />;
+}
+
+// ── DASHBOARD PRINCIPAL
+function Dashboard({ onSelect }) {
+  return (
+    <div className="app">
+      <header className="header">
+        <div className="header-left">
+          <div className="header-title">
+            Sistema de Detección de Intrusiones — SWaT
+          </div>
+          <div className="header-sub">
+            Secure Water Treatment · Análisis de tráfico de red SCADA
+          </div>
+        </div>
+        <div className="header-status">
+          <div className="header-dot" />
+          Sistema operativo
+        </div>
+      </header>
+
+      <div className="dashboard">
+        <div className="dashboard-intro">
+          <div className="dashboard-intro-title">
+            Seleccione el modo de análisis
+          </div>
+          <div className="dashboard-intro-sub">
+            El sistema utiliza un modelo Gradient Boosting entrenado sobre
+            datos combinados de red SCADA y sensores físicos del sistema SWaT.
+            Incorpora explicabilidad mediante SHAP values y reglas de decisión.
+          </div>
+        </div>
+
+        <div className="dashboard-cards">
+          <div className="dashboard-card" onClick={() => onSelect('casos')}>
+            <div className="dashboard-card-icon">◈</div>
+            <div className="dashboard-card-title">Casos de uso</div>
+            <div className="dashboard-card-desc">
+              Analiza 10 registros reales seleccionados del dataset SWaT.
+              Incluye ataques de distintos tipos — manipulación de nivel,
+              corte de caudal, presión anómala — y periodos normales de
+              referencia.
+            </div>
+            <div className="dashboard-card-meta">
+              <span>10 casos predefinidos</span>
+              <span>Respuesta inmediata</span>
+            </div>
+            <div className="dashboard-card-action">
+              Acceder →
+            </div>
+          </div>
+
+          <div className="dashboard-card" onClick={() => onSelect('escucha')}>
+            <div className="dashboard-card-icon dashboard-card-icon-dim">◎</div>
+            <div className="dashboard-card-title">Modo escucha</div>
+            <div className="dashboard-card-desc">
+              Simulación de detección en tiempo real. El sistema procesa
+              datos segundo a segundo a partir de un instante temporal
+              seleccionado y emite alerta cuando detecta un ataque.
+            </div>
+            <div className="dashboard-card-meta">
+              <span>5 secuencias temporales</span>
+              <span>Simulación en tiempo real</span>
+            </div>
+            <div className="dashboard-card-action dashboard-card-action-dim">
+              Acceder →
+            </div>
+          </div>
+        </div>
+
+        <div className="dashboard-footer">
+          <div className="dashboard-footer-item">
+            <span className="dashboard-footer-label">Modelo</span>
+            <span className="dashboard-footer-value">Gradient Boosting — 100 estimadores</span>
+          </div>
+          <div className="dashboard-footer-item">
+            <span className="dashboard-footer-label">Features</span>
+            <span className="dashboard-footer-value">21 (red + físicos)</span>
+          </div>
+          <div className="dashboard-footer-item">
+            <span className="dashboard-footer-label">AUC-ROC</span>
+            <span className="dashboard-footer-value">1.0 (K-Fold CV K=5)</span>
+          </div>
+          <div className="dashboard-footer-item">
+            <span className="dashboard-footer-label">Detección</span>
+            <span className="dashboard-footer-value">99.08% — Falsa alarma 0.01%</span>
+          </div>
+          <div className="dashboard-footer-item">
+            <span className="dashboard-footer-label">Dataset</span>
+            <span className="dashboard-footer-value">SWaT — iTrust, SUTD Singapore</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── MODO CASOS
+function ModoCasos({ onBack }) {
+  const [casos, setCasos]               = useState([]);
+  const [casosCargados, setCargados]    = useState(false);
+  const [seleccionado, setSeleccionado] = useState(null);
+  const [resultado, setResultado]       = useState(null);
+  const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState(null);
+
   useState(() => {
     axios.get(`${API}/casos`)
       .then(r => { setCasos(r.data); setCargados(true); })
@@ -40,21 +145,21 @@ export default function App() {
     <div className="app">
       <header className="header">
         <div className="header-left">
-          <div className="header-title">
-            Sistema de Detección de Intrusiones — SWaT
-          </div>
+          <div className="header-title">Casos de uso — Análisis individual</div>
           <div className="header-sub">
             Secure Water Treatment · Análisis de tráfico de red SCADA
           </div>
         </div>
-        <div className="header-status">
-          <div className="header-dot" />
-          Sistema operativo
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div className="header-status">
+            <div className="header-dot" />
+            Sistema operativo
+          </div>
+          <button className="back-btn" onClick={onBack}>← Volver al inicio</button>
         </div>
       </header>
 
       <div className="layout">
-        {/* Panel izquierdo — lista de casos */}
         <aside className="casos-panel">
           <div className="casos-panel-title">
             Casos de uso — {casos.length} registros
@@ -79,42 +184,33 @@ export default function App() {
           ))}
         </aside>
 
-        {/* Panel derecho — resultado */}
         <main className="result-panel">
           {error && (
             <div className="regla-veredicto ataque" style={{ marginBottom: 0 }}>
               ⚠ {error}
             </div>
           )}
-
           {!seleccionado && !error && (
             <div className="empty-state">
-              <div className="empty-state-icon">⬡</div>
+              <div className="empty-state-icon">◈</div>
               <div className="empty-state-text">
                 Selecciona un caso para analizar
               </div>
             </div>
           )}
-
           {loading && (
             <div className="loading">
               <div className="spinner" />
               Analizando registro...
             </div>
           )}
-
           {resultado && !loading && (
             <>
-              {/* Tarjeta de resultado */}
               <ResultCard resultado={resultado} />
-
-              {/* SHAP */}
               <ShapChart
                 shap_values={resultado.shap_values}
                 shap_base={resultado.shap_base}
               />
-
-              {/* Regla DT */}
               <ReglaDecision
                 regla={resultado.regla}
                 prediccion_dt={resultado.prediccion_dt}
@@ -127,7 +223,8 @@ export default function App() {
   );
 }
 
-// Componente inline simple para la tarjeta de resultado
+
+// ── RESULT CARD
 function ResultCard({ resultado }) {
   const esAtaque = resultado.prediccion === 'Ataque';
   const cls      = esAtaque ? 'ataque' : 'normal';
@@ -140,7 +237,8 @@ function ResultCard({ resultado }) {
           {esAtaque ? '⚠ ATAQUE DETECTADO' : '✓ TRÁFICO NORMAL'}
         </div>
         <div className="result-prob">
-          <div className="result-prob-value" style={{ color: esAtaque ? 'var(--danger)' : 'var(--safe)' }}>
+          <div className="result-prob-value"
+               style={{ color: esAtaque ? 'var(--danger)' : 'var(--safe)' }}>
             {pct}%
           </div>
           <div className="result-prob-label">prob. ataque</div>
@@ -148,10 +246,7 @@ function ResultCard({ resultado }) {
       </div>
 
       <div className="prob-bar">
-        <div
-          className={`prob-bar-fill ${cls}`}
-          style={{ width: `${pct}%` }}
-        />
+        <div className={`prob-bar-fill ${cls}`} style={{ width: `${pct}%` }} />
       </div>
 
       <div className="result-meta">
@@ -161,7 +256,8 @@ function ResultCard({ resultado }) {
         </div>
         <div className="meta-item">
           <span className="meta-label">Label real</span>
-          <span className="meta-value" style={{ color: resultado.label_real === 1 ? 'var(--danger)' : 'var(--safe)' }}>
+          <span className="meta-value"
+                style={{ color: resultado.label_real === 1 ? 'var(--danger)' : 'var(--safe)' }}>
             {resultado.label_real === 1 ? 'Ataque' : 'Normal'}
           </span>
         </div>
@@ -171,10 +267,13 @@ function ResultCard({ resultado }) {
         </div>
       </div>
 
-      <div className="result-meta" style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+      <div className="result-meta"
+           style={{ marginTop: '0.75rem', paddingTop: '0.75rem',
+                    borderTop: '1px solid var(--border)' }}>
         <div className="meta-item" style={{ gridColumn: '1 / -1' }}>
           <span className="meta-label">Descripción</span>
-          <span className="meta-value" style={{ fontFamily: 'var(--sans)', fontSize: '0.85rem' }}>
+          <span className="meta-value"
+                style={{ fontFamily: 'var(--sans)', fontSize: '0.85rem' }}>
             {resultado.descripcion}
           </span>
         </div>
