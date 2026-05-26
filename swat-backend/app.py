@@ -136,6 +136,10 @@ def predict_caso(caso_id: str):
     clase_nodo    = int(np.argmax(dt_aux.tree_.value[node]))
     prediccion_dt = "Ataque" if clase_nodo == 1 else "Normal"
 
+    explicacion_simple = generar_explicacion_simple(
+    shap_result, prediccion, prob_ataque
+)
+
     return {
         "caso_id":        caso_id,
         "timestamp":      caso["timestamp"],
@@ -149,7 +153,8 @@ def predict_caso(caso_id: str):
         "shap_base":      shap_base,
         "shap_values":    shap_result[:10],
         "regla":          regla,
-        "warnings":       warnings
+        "explicacion_simple": explicacion_simple,
+        "warnings":       warnings,
     }
 
 # ── Feature stats para el frontend
@@ -195,12 +200,16 @@ async def websocket_escucha(websocket: WebSocket, seq_id: str):
     secuencia  = SECUENCIAS[seq_id]
     registros  = secuencia["registros"]
     ataque_detectado = False
+    explicacion_simple = None 
+
+
 
     await websocket.send_json({
         "tipo":    "inicio",
         "seq_id":  seq_id,
         "nombre":  secuencia["nombre"],
-        "n_total": secuencia["n_total"]
+        "n_total": secuencia["n_total"],
+
     })
 
     for i, registro in enumerate(registros):
@@ -260,6 +269,11 @@ async def websocket_escucha(websocket: WebSocket, seq_id: str):
                         "shap_value": round(shap_f, 4)
                     })
 
+                                
+                explicacion_simple = generar_explicacion_simple(
+                    shap_vals, prediccion, prob_ataque
+                )
+
             await websocket.send_json({
                 "tipo": "registro",
                 "idx": i,
@@ -270,6 +284,8 @@ async def websocket_escucha(websocket: WebSocket, seq_id: str):
                 "shap_base": shap_base,
                 "shap_values": shap_vals,
                 "regla": regla,
+                "explicacion_simple": explicacion_simple,
+
             })
 
             # Si detectó ataque enviar evento de alerta y parar
@@ -285,3 +301,83 @@ async def websocket_escucha(websocket: WebSocket, seq_id: str):
 
     await websocket.send_json({"tipo": "fin"})
     await websocket.close()
+
+
+# ── Diccionario de traducción de features a lenguaje de técnico de planta
+FEATURE_DESCRIPCIONES = {
+    "avg_connection_duration_ms":  "duración media de las conexiones de red",
+    "max_connection_duration_ms":  "duración máxima de las conexiones de red",
+    "packets_per_ms":              "densidad de paquetes por milisegundo",
+    "duration_spread":             "variabilidad en la duración de conexiones",
+    "is_short_duration":           "indicador de conexiones anormalmente cortas",
+    "duration_ratio":              "proporción entre duración media y máxima",
+    "LIT401":                      "nivel del tanque 4 (etapa de tratamiento 4)",
+    "LIT101":                      "nivel del tanque 1 (etapa de tratamiento 1)",
+    "LIT301":                      "nivel del tanque 3 (etapa de tratamiento 3)",
+    "FIT201":                      "caudal de entrada en la etapa 2",
+    "FIT101":                      "caudal de entrada en la etapa 1",
+    "DPIT301":                     "presión diferencial en la etapa 3",
+    "lit401_low":                  "nivel del tanque 4 por debajo del mínimo operativo",
+    "lit101_high":                 "nivel del tanque 1 por encima del máximo operativo",
+    "dpit301_low":                 "presión diferencial en etapa 3 anormalmente baja",
+    "fit201_zero":                 "caudal de entrada en etapa 2 cortado o próximo a cero",
+    "fit101_zero":                 "caudal de entrada en etapa 1 cortado o próximo a cero",
+    "lit101_lit401_ratio":         "relación entre niveles del tanque 1 y tanque 4",
+    "transaction_id_std":          "variabilidad en los identificadores de transacción Modbus",
+    "transaction_id_range":        "rango de identificadores de transacción Modbus",
+    "request_response_ratio":      "proporción entre peticiones y respuestas Modbus",
+}
+
+def generar_explicacion_simple(shap_values, prediccion, probabilidad):
+    """Genera una explicación en lenguaje natural para un técnico de planta."""
+
+    # Top 3 features que más empujan hacia la predicción
+    direccion = 1 if prediccion == "Ataque" else -1
+    relevantes = sorted(
+        shap_values,
+        key=lambda x: x["shap_value"] * direccion,
+        reverse=True
+    )[:3]
+
+    if prediccion == "Ataque":
+        intro = f"El sistema ha clasificado este registro como ATAQUE con una confianza del {probabilidad*100:.1f}%."
+        motivo = "Los principales indicadores que han activado la alarma son:"
+    else:
+        intro = f"El sistema ha clasificado este registro como NORMAL con una confianza del {(1-probabilidad)*100:.1f}%."
+        motivo = "Los principales factores que indican operación normal son:"
+
+    factores = []
+    for item in relevantes:
+        feat = item["feature"]
+        val  = item["valor"]
+        sv   = item["shap_value"]
+        desc = FEATURE_DESCRIPCIONES.get(feat, feat)
+
+        if prediccion == "Ataque" and sv > 0:
+            if "duración" in desc and "cortas" in desc:
+                factores.append(f"Las conexiones de red son anormalmente cortas ({val:.0f} ms), lo que indica actividad automatizada o manipulación del protocolo.")
+            elif "nivel" in desc and "bajo" in desc:
+                factores.append(f"El {desc} está en un valor anómalo ({val:.3f}), fuera del rango operativo normal.")
+            elif "caudal" in desc and "cortado" in desc:
+                factores.append(f"El {desc} ({val:.3f}), lo que indica posible manipulación de válvulas o actuadores.")
+            elif "presión" in desc and "baja" in desc:
+                factores.append(f"La {desc} está colapsada ({val:.3f}), indicando posible ataque en la etapa 3.")
+            elif "nivel" in desc and "alto" in desc:
+                factores.append(f"El {desc} está en un valor peligrosamente elevado ({val:.3f}).")
+            elif "duración media" in desc:
+                factores.append(f"La {desc} es de {val/1e6:.1f} segundos, valor {('bajo' if val < 2e8 else 'alto')} respecto al rango normal (200-400 s).")
+            elif "densidad" in desc:
+                factores.append(f"La {desc} ({val:.2f}) indica un patrón de tráfico inusual.")
+            else:
+                factores.append(f"La variable '{desc}' presenta un valor anómalo ({val:.4f}) con alta influencia en la decisión.")
+        else:
+            factores.append(f"La variable '{desc}' presenta un valor dentro del rango operativo normal ({val:.4f}).")
+
+    partes = [intro, motivo] + [f"• {f}" for f in factores]
+
+    if prediccion == "Ataque":
+        partes.append("Se recomienda revisar el estado de los sensores y actuadores indicados y verificar si existe manipulación física o cibernética del sistema.")
+    else:
+        partes.append("No se han detectado anomalías significativas en este instante temporal.")
+
+    return " ".join(partes)
